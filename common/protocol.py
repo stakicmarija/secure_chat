@@ -1,5 +1,6 @@
 from common.config import FORMAT, HEADER
 
+
 def recv_exact(socket, size):
     data = b""
     while len(data) < size:

@@ -1,8 +1,9 @@
 import socket
 import threading
 
-from common.config import ADDR, HOST
-from common.messages import ClientMessage, ServerMessage, parse_hello
+from common.config import ADDR
+from common.messages import ClientMessage, ServerMessage, parse_hello,\
+    build_server_user_list, DiffieHellmanMessage, parse_dh_target
 from common.protocol import recv_packet, send_packet
 
 
@@ -15,24 +16,27 @@ class Server:
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind(addr)
 
-        self.clients = {}       # username -> socket
-        self.sockets = {}       # socket -> username
+        self.clients = {}       # username : socket
+        self.sockets = {}       # socket : username
         self.clients_lock = threading.Lock()
 
-    def broadcast(self, message, sender_socket):
+    def broadcast_user_list(self):
         with self.clients_lock:
-            targets = [sock for sock in self.clients.values() if sock != sender_socket]
+            clients = ' '.join(self.clients.keys())
 
-        failed = []
-        for sock in targets:
+        message = build_server_user_list(clients)
+
+        for sock in self.sockets:
             try:
                 send_packet(sock, message)
-            except Exception as exc:
-                print(f"[SERVER] Failed to send: {exc}")
-                failed.append(sock)
+            except Exception:
+                pass
 
-        for sock in failed:
-            self.remove_client(sock)
+    def forward_dh(self, message, target):
+        with self.clients_lock:
+            sock = self.clients.get(target)
+        if sock:
+            send_packet(sock, message)
 
     def remove_client(self, client_socket):
         with self.clients_lock:
@@ -44,6 +48,8 @@ class Server:
             client_socket.close()
         except OSError:
             pass
+        finally:
+            self.broadcast_user_list()
 
     def register_client(self, client_socket, address):
         hello = recv_packet(client_socket)
@@ -53,7 +59,7 @@ class Server:
             send_packet(client_socket, ServerMessage.HELLO_ERR_INVALID_HELLO.value)
             return None
 
-        if not username:
+        if (not username) or (" " in username):
             send_packet(client_socket, ServerMessage.HELLO_ERR_INVALID_USERNAME.value)
             return None
 
@@ -70,6 +76,7 @@ class Server:
             return None
 
         send_packet(client_socket, ServerMessage.HELLO_OK.value)
+        self.broadcast_user_list()
         print(f"{address} registered as {username}")
 
         return username
@@ -86,12 +93,15 @@ class Server:
 
             while True:
                 message = recv_packet(client_socket)
-
                 if message is None or message == ClientMessage.DISCONNECT.value:
                     break
 
-                self.broadcast(f"{username}: {message}", sender_socket=client_socket)
-                print(f"{address} ({username}): {message}")
+                if message.startswith(DiffieHellmanMessage.DH_INIT.value) \
+                        or message.startswith(DiffieHellmanMessage.DH_RESPONSE.value):
+                    target = parse_dh_target(message)
+                    self.forward_dh(message, target)
+                else:
+                    print(f"{address} ({username}): {message}")
 
         except Exception as exc:
             print(f"[SERVER] Client thread error for {address}: {exc}")
@@ -132,3 +142,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
