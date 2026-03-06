@@ -1,0 +1,8 @@
+HOST = "127.0.0.1"
+PORT = 5555
+ADDR = (HOST, PORT)
+
+HEADER = 16
+FORMAT = "utf-8"
+
+QUIT_COMMAND = "/quit"
