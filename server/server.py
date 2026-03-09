@@ -3,7 +3,7 @@ import threading
 
 from common.config import ADDR
 from common.messages import ClientMessage, ServerMessage, parse_hello,\
-    build_server_user_list, DiffieHellmanMessage, parse_dh_target
+    build_server_user_list, DiffieHellmanMessage, parse_dh_target, parse_chat
 from common.protocol import recv_packet, send_packet
 
 
@@ -100,6 +100,10 @@ class Server:
                         or message.startswith(DiffieHellmanMessage.DH_RESPONSE.value):
                     target = parse_dh_target(message)
                     self.forward_dh(message, target)
+                elif message.startswith(ClientMessage.CHAT.value):
+                    target, username, payload = parse_chat(message)
+                    target_socket = self.clients[target]
+                    send_packet(target_socket, payload)
                 else:
                     print(f"{address} ({username}): {message}")
 

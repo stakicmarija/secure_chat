@@ -1,11 +1,11 @@
 import socket
 import threading
-
-from common.config import ADDR, QUIT_COMMAND, CHAT_COMMAND
+import hashlib
+from common.config import ADDR, QUIT_COMMAND, CHAT_COMMAND, FORMAT
 from common.messages import ClientMessage, ServerMessage, build_hello, parse_server_user_list,\
-    DiffieHellmanMessage, parse_dh_sender, parse_dh_public_key
+    DiffieHellmanMessage, parse_dh_sender, parse_dh_public_key, build_chat
 from common.protocol import recv_packet, send_packet
-from common.cryptography import generate_private_key, generate_public_key, generate_session_key
+from common.cryptography import generate_private_key, generate_public_key, generate_session_key, encrypt, decrypt
 
 
 class Client:
@@ -72,18 +72,23 @@ class Client:
                     user_dh_public = parse_dh_public_key(message)
                     print(f"\n[SYSTEM] {sender} wants to start a secure session. Accepting...")
                     self.start_session(sender, False)
-                    self.session_key = generate_session_key(user_dh_public, self.dh_private)
+                    session_key = generate_session_key(user_dh_public, self.dh_private)
+                    session_key = session_key.to_bytes((session_key.bit_length() + 7) // 8, byteorder='big')
+                    self.session_key = hashlib.sha256(session_key).digest()
                     print(f"[SYSTEM] Secure session established with {sender}.")
 
                 elif message.startswith(DiffieHellmanMessage.DH_RESPONSE.value):
                     sender = parse_dh_sender(message)
                     user_dh_public = parse_dh_public_key(message)
                     if sender == self.chats_with:
-                        self.session_key = generate_session_key(user_dh_public, self.dh_private)
+                        session_key = generate_session_key(user_dh_public, self.dh_private)
+                        session_key = session_key.to_bytes((session_key.bit_length() + 7) // 8, byteorder='big')
+                        self.session_key = hashlib.sha256(session_key).digest()
                         print(f"[SYSTEM] Secure session established with {sender}.")
 
-                else:
-                    print(f"\n{message}")
+                elif self.session_key:
+                    plaintext = decrypt(self.session_key, message)
+                    print(f"\n{plaintext}")
 
             except Exception as exc:
                 if not self.stop_event.is_set():
@@ -118,8 +123,10 @@ class Client:
                     print(f"Starting session with {msg[1]}...")
                     self.start_session(msg[1], True)
 
-            elif text.strip():
-                send_packet(self.socket, text)
+            elif text.strip() and self.session_key:
+                encrypted_text = encrypt(self.session_key, text)
+                chat_message = build_chat(self.chats_with, self.username, encrypted_text)
+                send_packet(self.socket, chat_message)
 
     def close(self):
         self.stop_event.set()
